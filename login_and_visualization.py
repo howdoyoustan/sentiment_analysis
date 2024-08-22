@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
-import hashlib
 import re
 
 # Database connection
@@ -11,12 +10,11 @@ engine = create_engine('sqlite:///brand_analysis.db')
 def sanitize_table_name(name):
     return re.sub(r'\W+', '_', name.lower())
 
-# Check login credentials
+# Check login credentials without password hashing
 def check_login(username, password):
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
     with engine.connect() as connection:
-        result = connection.execute(text("SELECT * FROM brand_credentials WHERE username = :username AND password_hash = :password_hash"),
-                                    {"username": username, "password_hash": password_hash})
+        result = connection.execute(text("SELECT * FROM brand_credentials WHERE username = :username AND password = :password"),
+                                    {"username": username, "password": password})
         return result.fetchone() is not None
 
 # Main function for Page 2
@@ -47,19 +45,19 @@ def main_page_2():
                 st.bar_chart(df['business_ratings'])
 
             else:
-                st.error("Invalid credentials")
-        else:
-            st.header(f'Welcome, {st.session_state.username.capitalize()}')
-            st.header('Visualize Brand Analysis')
+                st.error("Invalid credentials. Please try again.")
+    else:
+        st.header(f'Welcome, {st.session_state.username.capitalize()}')
+        st.header('Visualize Brand Analysis')
 
-            # Automatically display the report after login
-            table_name = sanitize_table_name(f"{st.session_state.username}_analysis")
-            query = f"SELECT * FROM {table_name}"
-            with engine.connect() as connection:
-                df = pd.read_sql(query, connection)
+        # Automatically display the report after login
+        table_name = sanitize_table_name(f"{st.session_state.username}_analysis")
+        query = f"SELECT * FROM {table_name}"
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
 
-            st.write(df)
-            st.bar_chart(df['business_ratings'])
+        st.write(df)
+        st.bar_chart(df['business_ratings'])
 
-        if __name__ == '__main__':
-            main_page_2()
+if __name__ == '__main__':
+    main_page_2()

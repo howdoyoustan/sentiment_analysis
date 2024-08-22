@@ -22,7 +22,7 @@ nltk.download('punkt', quiet=True)
 engine = create_engine('sqlite:///brand_analysis.db')
 
 
-# CleaningPipeline class
+# CleaningPipeline class (as before)
 class CleaningPipeline:
     def __init__(self):
         self.stop_words = set(stopwords.words('english'))
@@ -50,7 +50,6 @@ class CleaningPipeline:
         text = self.remove_stopwords(text)
         text = self.lemmatize_words(text)
         return text
-
 
 # Function to sanitize table names
 def sanitize_table_name(name):
@@ -87,14 +86,16 @@ def get_top_themes(bigram_sentiments, top_n=10):
 # Function to analyze brand with bigrams
 def analyze_brand_with_bigrams(df, brand_name):
     brand_data = df[df['name'] == brand_name]
-    brand_data['clean_text'] = brand_data['text'].apply(CleaningPipeline().clean_text)
 
-    bigram_sentiments = []
-    for text in brand_data['clean_text']:
-        bigrams = extract_bigrams(text)
-        bigram_sentiments.extend(analyze_bigram_sentiment(bigrams, text))
+    all_bigrams = []
+    all_bigram_sentiments = []
 
-    positive_themes, negative_themes = get_top_themes(bigram_sentiments)
+    for _, row in brand_data.iterrows():
+        bigrams = extract_bigrams(row['clean_text'])
+        all_bigrams.extend(bigrams)
+        all_bigram_sentiments.extend(analyze_bigram_sentiment(bigrams, row['text']))
+
+    positive_themes, negative_themes = get_top_themes(all_bigram_sentiments)
 
     analysis = {
         'brand_name': brand_name,
@@ -105,20 +106,24 @@ def analyze_brand_with_bigrams(df, brand_name):
         'average_sentiment_score': brand_data['sentiment_score'].mean(),
         'average_nps': brand_data['nps'].mean(),
         'average_csat': brand_data['csat'].mean(),
-        'positive_themes': positive_themes,
-        'negative_themes': negative_themes
+        'positive_themes': ', '.join(positive_themes),
+        'negative_themes': ', '.join(negative_themes),
     }
 
-    return pd.DataFrame([analysis]), brand_data
+    return pd.DataFrame([analysis]), brand_data, all_bigram_sentiments
 
 
 # Function to store brand report
-def store_brand_report(brand_name, report_df, brand_data):
+def store_brand_report(brand_name, report_df, brand_data, bigram_sentiments):
     table_name = sanitize_table_name(f"{brand_name}_report")
     report_df.to_sql(table_name, engine, if_exists='replace', index=False)
 
     data_table_name = sanitize_table_name(f"{brand_name}_data")
     brand_data.to_sql(data_table_name, engine, if_exists='replace', index=False)
+
+    bigram_sentiments_df = pd.DataFrame(bigram_sentiments, columns=['bigram', 'sentiment'])
+    bigram_table_name = sanitize_table_name(f"{brand_name}_bigrams")
+    bigram_sentiments_df.to_sql(bigram_table_name, engine, if_exists='replace', index=False)
 
 
 # Function to generate and store credentials
@@ -144,7 +149,6 @@ def generate_and_store_credentials(brand_names):
             """), {'username': username, 'password': password, 'brand_name': brand_name})
         conn.commit()
 
-
 # Function to check login
 def check_login(username, password):
     with engine.connect() as conn:
@@ -155,9 +159,10 @@ def check_login(username, password):
         return result.fetchone()
 
 
+
 # Function to create word cloud
 def create_word_cloud(themes):
-    wordcloud = WordCloud(width=800, height=400, background_color='white').generate_from_frequencies(dict(themes))
+    wordcloud = WordCloud(width=800, height=400, background_color='white').generate(' '.join(themes))
     return wordcloud
 
 
@@ -178,8 +183,8 @@ def main():
             brand_names = df['name'].unique()
 
             for brand_name in brand_names:
-                report, brand_data = analyze_brand_with_bigrams(df, brand_name)
-                store_brand_report(brand_name, report, brand_data)
+                report, brand_data, bigram_sentiments = analyze_brand_with_bigrams(df, brand_name)
+                store_brand_report(brand_name, report, brand_data, bigram_sentiments)
 
             generate_and_store_credentials(brand_names)
 
@@ -201,10 +206,12 @@ def main():
 
                 report_table_name = sanitize_table_name(f"{user.brand_name}_report")
                 data_table_name = sanitize_table_name(f"{user.brand_name}_data")
+                bigram_table_name = sanitize_table_name(f"{user.brand_name}_bigrams")
 
                 with engine.connect() as conn:
                     report_df = pd.read_sql(f"SELECT * FROM {report_table_name}", conn)
                     brand_data = pd.read_sql(f"SELECT * FROM {data_table_name}", conn)
+                    bigram_sentiments = pd.read_sql(f"SELECT * FROM {bigram_table_name}", conn)
 
                 st.header(f"Report for {user.brand_name}")
                 st.write(report_df)
@@ -248,9 +255,36 @@ def main():
                 st.map(brand_data[['latitude', 'longitude']])
 
                 # 6. Word Clouds for Positive and Negative Themes
-                st.subheader("Word Clouds for Themes")
+                st.subheader("Themes Analysis")
+
                 col1, col2 = st.columns(2)
 
                 with col1:
                     st.write("Positive Themes")
                     positive_wordcloud = create_word_cloud(report_df['positive_themes'].values[0])
+                    fig, ax = plt.subplots()
+                    ax.imshow(positive_wordcloud, interpolation='bilinear')
+                    ax.axis('off')
+                    st.pyplot(fig)
+
+                with col2:
+                    st.write("Negative Themes")
+                    negative_wordcloud = create_word_cloud(report_df['negative_themes'].values[0])
+                    fig, ax = plt.subplots()
+                    ax.imshow(negative_wordcloud, interpolation='bilinear')
+                    ax.axis('off')
+                    st.pyplot(fig)
+
+                # 7. Common Strengths and Areas for Improvement
+                st.subheader("Common Strengths")
+                st.write(", ".join(report_df['positive_themes'].values[0][:5]))
+
+                st.subheader("Areas for Improvement")
+                st.write(", ".join(report_df['negative_themes'].values[0][:5]))
+
+            else:
+                st.error("Invalid credentials. Please try again.")
+
+
+if __name__ == '__main__':
+    main()
